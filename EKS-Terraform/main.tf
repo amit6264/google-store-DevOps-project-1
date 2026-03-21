@@ -8,7 +8,7 @@ terraform {
 }
 
 provider "aws" {
-  region = "us-east-1"
+  region = "eu-north-1"
 }
 
 ############################
@@ -47,7 +47,7 @@ resource "aws_subnet" "public1" {
 
   vpc_id                  = aws_vpc.eks_vpc.id
   cidr_block              = "10.0.1.0/24"
-  availability_zone       = "us-east-1a"
+  availability_zone       = "eu-north-1a"
   map_public_ip_on_launch = true
 }
 
@@ -55,7 +55,7 @@ resource "aws_subnet" "public2" {
 
   vpc_id                  = aws_vpc.eks_vpc.id
   cidr_block              = "10.0.2.0/24"
-  availability_zone       = "us-east-1b"
+  availability_zone       = "eu-north-1b"
   map_public_ip_on_launch = true
 }
 
@@ -63,14 +63,14 @@ resource "aws_subnet" "private1" {
 
   vpc_id            = aws_vpc.eks_vpc.id
   cidr_block        = "10.0.3.0/24"
-  availability_zone = "us-east-1a"
+  availability_zone = "eu-north-1a"
 }
 
 resource "aws_subnet" "private2" {
 
   vpc_id            = aws_vpc.eks_vpc.id
   cidr_block        = "10.0.4.0/24"
-  availability_zone = "us-east-1b"
+  availability_zone = "eu-north-1b"
 }
 
 ############################
@@ -235,7 +235,7 @@ resource "aws_iam_role_policy_attachment" "ecr" {
 
 resource "aws_eks_cluster" "eks" {
 
-  name     = "naresh"
+  name     = "amit"
   role_arn = aws_iam_role.cluster_role.arn
   version  = var.cluster_version
 
@@ -270,22 +270,28 @@ resource "aws_eks_node_group" "node_group" {
     aws_subnet.private1.id,
     aws_subnet.private2.id
   ]
-  
-    
-  instance_types = ["t3.medium"]
 
-  scaling_config {
-
-    desired_size = 4
-    max_size     = 6
-    min_size     = 1
+  # 👇 FIXED: launch template only, no instance_types here
+  launch_template {
+    id      = aws_launch_template.eks_node_lt.id
+    version = "$Latest"
   }
 
+  scaling_config {
+    desired_size = 4
+    max_size     = 6
+    min_size     = 2
+  }
+
+  capacity_type = "ON_DEMAND"
+
   depends_on = [
+    aws_nat_gateway.nat,
     aws_iam_role_policy_attachment.worker_node,
     aws_iam_role_policy_attachment.cni,
     aws_iam_role_policy_attachment.ecr
   ]
+
   tags = {
     Name        = "eks-node"
     Environment = "dev"
@@ -293,11 +299,36 @@ resource "aws_eks_node_group" "node_group" {
     Owner       = "veeraops"
   }
 }
+resource "aws_launch_template" "eks_node_lt" {
+  name_prefix = "eks-node-lt"
 
+  # 👇 Instance type must be here ONLY
+  instance_type = "t3.medium"
+
+  network_interfaces {
+    associate_public_ip_address = false
+  }
+
+  block_device_mappings {
+    device_name = "/dev/xvda"
+    ebs {
+      volume_size = 20
+      volume_type = "gp3"
+    }
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name = "eks-private-node"
+    }
+  }
+}
+#####EKS-Bastion#############
 
 resource "aws_instance" "eks" {
-    ami           = "ami-02dfbd4ff395f2a1b"
-    instance_type = "t2.medium"
+    ami           = "ami-0aaa636894689fa47"
+    instance_type = "t3.medium"
     subnet_id     = aws_subnet.public1.id
     vpc_security_group_ids = [aws_security_group.allow_all.id]
     root_block_device {
@@ -426,4 +457,84 @@ resource "aws_eks_addon" "ebs_csi" {
     aws_eks_node_group.node_group,
     aws_eks_pod_identity_association.ebs_csi
   ]
+}
+
+
+
+############# EKS-RDS #############
+
+############################
+# RDS SECURITY GROUP
+############################
+
+resource "aws_security_group" "rds_sg" {
+  name        = "rds-security-group"
+  description = "Allow access to RDS from EKS nodes"
+  vpc_id      = aws_vpc.eks_vpc.id
+
+  ingress {
+    description = "MySQL access"
+    from_port   = 3306
+    to_port     = 3306
+    protocol    = "tcp"
+    # Allow only EKS node group SG (secure)
+    security_groups = [aws_security_group.allow_all.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "rds-sg"
+  }
+}
+
+############################
+# DB SUBNET GROUP
+############################
+
+resource "aws_db_subnet_group" "rds_subnet_group" {
+  name       = "eks-rds-subnet-group"
+  subnet_ids = [
+    aws_subnet.private1.id,
+    aws_subnet.private2.id
+  ]
+
+  tags = {
+    Name = "rds-subnet-group"
+  }
+}
+
+############################
+# RDS INSTANCE
+############################
+
+resource "aws_db_instance" "rds" {
+
+  identifier = "eks-rds-db"
+
+  engine               = "mysql"
+  engine_version       = "8.0"
+  instance_class       = "db.t3.micro"   # free-tier compatible
+  allocated_storage    = 20
+  storage_type         = "gp3"
+  db_subnet_group_name = aws_db_subnet_group.rds_subnet_group.name
+
+  username = "admin"
+  password = "Admin12345!"       # you can store in Secrets Manager
+
+  vpc_security_group_ids = [aws_security_group.rds_sg.id]
+
+  skip_final_snapshot = true
+  publicly_accessible = false    # Private DB only
+
+  multi_az = false               # Optional - enable if required
+
+  tags = {
+    Name = "eks-rds"
+  }
 }
