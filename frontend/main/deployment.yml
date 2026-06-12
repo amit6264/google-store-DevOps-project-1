@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: main-frontend
-        image: 744420879952.dkr.ecr.eu-north-1.amazonaws.com/shopping-site-main:f97e85cf5a986da6e0af5f71dfdc510dfd6f7a40
+        image: 744420879952.dkr.ecr.eu-north-1.amazonaws.com/shopping-site-main:6097d417e56f1577e06cbb48cc84bb4516addd40
         ports:
         - containerPort: 80
 
