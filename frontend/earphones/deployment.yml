@@ -16,6 +16,6 @@ spec:
     spec:
       containers:
       - name: earphones
-        image: 744420879952.dkr.ecr.eu-north-1.amazonaws.com/shopping-site-earphones:1aa3cb1bb27f9ac79147c3f3c79b3c907fc3b80b
+        image: 744420879952.dkr.ecr.eu-north-1.amazonaws.com/shopping-site-earphones:d566a0dda63a455cfed0a21bc99a1baaebcadf92
         ports:
         - containerPort: 80
